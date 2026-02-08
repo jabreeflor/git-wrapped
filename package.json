@@ -1,0 +1,51 @@
+{
+  "name": "git-wrapped",
+  "version": "1.0.0",
+  "description": "🎁 Your Spotify Wrapped, but for GitHub commits",
+  "main": "dist/index.js",
+  "bin": {
+    "git-wrapped": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "github",
+    "wrapped",
+    "stats",
+    "cli",
+    "developer",
+    "year-in-review",
+    "spotify-wrapped"
+  ],
+  "author": "jabreeflor",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jabreeflor/git-wrapped"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
+    "commander": "^12.1.0",
+    "gradient-string": "^3.0.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.5",
+    "@types/gradient-string": "^1.1.6",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
