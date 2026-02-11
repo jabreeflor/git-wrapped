@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import type { WrappedStats, RepoStats, DayStats, Collaborator, PersonalityType } from '../types.js';
+import type { WrappedStats, RepoStats, DayStats, Collaborator, PersonalityType, YearComparison, HeatmapData, HeatmapWeek, FunFact } from '../types.js';
 
 export class GitHubService {
   private octokit: Octokit;
@@ -52,6 +52,45 @@ export class GitHubService {
     // Calculate totals
     const totalAdditions = commits.reduce((sum, c) => sum + c.additions, 0);
     const totalDeletions = commits.reduce((sum, c) => sum + c.deletions, 0);
+
+    // Generate heatmap
+    const heatmap = this.generateHeatmap(dailyCommits);
+
+    // Generate fun facts
+    const funFacts = this.generateFunFacts({
+      commits,
+      byHour,
+      byDay,
+      totalCommits: commits.length,
+      totalAdditions,
+      totalDeletions,
+      longestStreak,
+      repos: repoStats,
+      languages
+    });
+
+    // Try to get year comparison (optional)
+    let yearComparison: YearComparison | undefined;
+    try {
+      yearComparison = await this.getYearComparison();
+      if (yearComparison) {
+        // Fill in current year stats
+        yearComparison.commits.current = commits.length;
+        yearComparison.commits.change = this.calculateChange(commits.length, yearComparison.commits.previous);
+        yearComparison.prs.current = prs.length;
+        yearComparison.prs.change = this.calculateChange(prs.length, yearComparison.prs.previous);
+        yearComparison.additions.current = totalAdditions;
+        yearComparison.additions.change = this.calculateChange(totalAdditions, yearComparison.additions.previous);
+        yearComparison.deletions.current = totalDeletions;
+        yearComparison.deletions.change = this.calculateChange(totalDeletions, yearComparison.deletions.previous);
+        yearComparison.repos.current = repoStats.length;
+        yearComparison.repos.change = this.calculateChange(repoStats.length, yearComparison.repos.previous);
+        yearComparison.streak.current = longestStreak;
+        yearComparison.streak.change = this.calculateChange(longestStreak, yearComparison.streak.previous);
+      }
+    } catch {
+      yearComparison = undefined;
+    }
 
     // Determine personality
     const personality = this.determinePersonality({
@@ -110,7 +149,12 @@ export class GitHubService {
       personality,
       biggestDay,
       biggestDeletion,
-      dailyCommits
+      dailyCommits,
+      
+      // New features
+      heatmap,
+      funFacts,
+      yearComparison
     };
   }
 
@@ -543,5 +587,405 @@ export class GitHubService {
     if (workHours > totalCommits * 0.5) return 'nine-to-fiver';
     
     return 'nine-to-fiver';
+  }
+
+  private generateHeatmap(dailyCommits: DayStats[]): HeatmapData {
+    // Create a map of date -> commits
+    const commitMap = new Map<string, number>();
+    for (const day of dailyCommits) {
+      commitMap.set(day.date, day.commits);
+    }
+
+    // Generate all weeks of the year
+    const startDate = new Date(this.year, 0, 1);
+    const endDate = new Date(this.year, 11, 31);
+    
+    // Find the first Sunday of or before the year start
+    const firstDay = new Date(startDate);
+    while (firstDay.getDay() !== 0) {
+      firstDay.setDate(firstDay.getDate() - 1);
+    }
+
+    const weeks: HeatmapWeek[] = [];
+    let currentDate = new Date(firstDay);
+    let maxCommits = 0;
+
+    while (currentDate <= endDate || weeks.length < 53) {
+      const week: HeatmapWeek = { days: [] };
+      
+      for (let d = 0; d < 7; d++) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        const isInYear = currentDate.getFullYear() === this.year;
+        const commits = isInYear ? (commitMap.get(dateStr) || 0) : 0;
+        
+        if (commits > maxCommits) maxCommits = commits;
+        
+        week.days.push({
+          date: dateStr,
+          commits,
+          level: 0 // Will be calculated after we know maxCommits
+        });
+        
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      
+      weeks.push(week);
+      
+      if (currentDate > endDate && weeks.length >= 52) break;
+    }
+
+    // Calculate levels based on maxCommits
+    for (const week of weeks) {
+      for (const day of week.days) {
+        if (day.commits === 0) {
+          day.level = 0;
+        } else if (maxCommits > 0) {
+          const ratio = day.commits / maxCommits;
+          if (ratio <= 0.25) day.level = 1;
+          else if (ratio <= 0.5) day.level = 2;
+          else if (ratio <= 0.75) day.level = 3;
+          else day.level = 4;
+        }
+      }
+    }
+
+    return { weeks, maxCommits };
+  }
+
+  private generateFunFacts(data: {
+    commits: Array<{ date: Date; message: string; additions: number; deletions: number; repo: string }>;
+    byHour: number[];
+    byDay: Record<string, number>;
+    totalCommits: number;
+    totalAdditions: number;
+    totalDeletions: number;
+    longestStreak: number;
+    repos: RepoStats[];
+    languages: Record<string, number>;
+  }): FunFact[] {
+    const facts: FunFact[] = [];
+    const { commits, byHour, byDay, totalCommits, totalAdditions, totalDeletions, longestStreak, repos, languages } = data;
+
+    // Most productive hour fact
+    const peakHour = byHour.indexOf(Math.max(...byHour));
+    const peakHourCommits = byHour[peakHour];
+    const peakHourPct = totalCommits > 0 ? Math.round((peakHourCommits / totalCommits) * 100) : 0;
+    
+    if (peakHour >= 0 && peakHour <= 4) {
+      facts.push({
+        emoji: '🦉',
+        text: `Your most productive hour is ${this.formatHour(peakHour)} — the night is young!`,
+        category: 'time'
+      });
+    } else if (peakHour >= 5 && peakHour <= 7) {
+      facts.push({
+        emoji: '🌅',
+        text: `You're an early bird! ${peakHourPct}% of your commits happen at ${this.formatHour(peakHour)}`,
+        category: 'time'
+      });
+    } else if (peakHour >= 22) {
+      facts.push({
+        emoji: '🌙',
+        text: `Late night coder alert! You peak at ${this.formatHour(peakHour)}`,
+        category: 'time'
+      });
+    }
+
+    // Day of week comparison
+    const days = Object.entries(byDay).sort((a, b) => b[1] - a[1]);
+    const topDay = days[0];
+    const bottomDay = days[days.length - 1];
+    if (topDay && bottomDay && topDay[1] > 0 && bottomDay[1] > 0) {
+      const ratio = topDay[1] / bottomDay[1];
+      if (ratio >= 2) {
+        facts.push({
+          emoji: '📅',
+          text: `You commit ${ratio.toFixed(1)}x more on ${topDay[0]}s than ${bottomDay[0]}s`,
+          category: 'time'
+        });
+      }
+    }
+
+    // Friday commits
+    const fridayCommits = byDay['Friday'] || 0;
+    const mondayCommits = byDay['Monday'] || 0;
+    if (fridayCommits > mondayCommits * 1.5 && fridayCommits > 5) {
+      facts.push({
+        emoji: '🎉',
+        text: `TGIF! You're ${Math.round((fridayCommits / mondayCommits - 1) * 100)}% more productive on Fridays`,
+        category: 'quirky'
+      });
+    }
+
+    // Weekend warrior check
+    const weekendCommits = (byDay['Saturday'] || 0) + (byDay['Sunday'] || 0);
+    const weekdayCommits = totalCommits - weekendCommits;
+    if (weekendCommits > totalCommits * 0.25) {
+      facts.push({
+        emoji: '⚔️',
+        text: `${Math.round((weekendCommits / totalCommits) * 100)}% of your commits are on weekends — work-life balance who?`,
+        category: 'time'
+      });
+    }
+
+    // Lines per commit
+    if (totalCommits > 0) {
+      const avgLinesPerCommit = Math.round((totalAdditions + totalDeletions) / totalCommits);
+      if (avgLinesPerCommit > 200) {
+        facts.push({
+          emoji: '📦',
+          text: `You average ${avgLinesPerCommit} lines per commit — big commits energy!`,
+          category: 'code'
+        });
+      } else if (avgLinesPerCommit < 20 && totalCommits > 50) {
+        facts.push({
+          emoji: '✨',
+          text: `With ~${avgLinesPerCommit} lines per commit, you're a master of atomic commits`,
+          category: 'code'
+        });
+      }
+    }
+
+    // Deletion facts
+    if (totalDeletions > totalAdditions) {
+      const ratio = totalDeletions / totalAdditions;
+      facts.push({
+        emoji: '🧹',
+        text: `You deleted ${ratio.toFixed(1)}x more code than you added — cleanup crew!`,
+        category: 'code'
+      });
+    }
+
+    // Streak facts
+    if (longestStreak >= 30) {
+      facts.push({
+        emoji: '🔥',
+        text: `Your ${longestStreak}-day streak is legendary — that's ${Math.round(longestStreak / 7)} weeks straight!`,
+        category: 'quirky'
+      });
+    } else if (longestStreak >= 14) {
+      facts.push({
+        emoji: '💪',
+        text: `${longestStreak} days of commits in a row — consistency is key!`,
+        category: 'quirky'
+      });
+    }
+
+    // Repo facts
+    if (repos.length === 1) {
+      facts.push({
+        emoji: '🎯',
+        text: `100% focus — all commits went to ${repos[0].name.split('/')[1]}`,
+        category: 'code'
+      });
+    } else if (repos.length >= 10) {
+      facts.push({
+        emoji: '🦑',
+        text: `You contributed to ${repos.length} repos — true open source octopus!`,
+        category: 'social'
+      });
+    }
+
+    // Language facts
+    const langList = Object.entries(languages).sort((a, b) => b[1] - a[1]);
+    if (langList.length >= 5) {
+      facts.push({
+        emoji: '🌍',
+        text: `You coded in ${langList.length} languages — polyglot programmer!`,
+        category: 'code'
+      });
+    }
+    
+    // Top language dominance
+    if (langList.length > 1) {
+      const totalLangBytes = langList.reduce((sum, [, bytes]) => sum + bytes, 0);
+      const topLangPct = Math.round((langList[0][1] / totalLangBytes) * 100);
+      if (topLangPct >= 80) {
+        facts.push({
+          emoji: '💝',
+          text: `${topLangPct}% of your code is ${langList[0][0]} — you've found "the one"`,
+          category: 'code'
+        });
+      }
+    }
+
+    // Commit message quirks (sample first 100 commits)
+    const sampleCommits = commits.slice(0, 100);
+    const wipCount = sampleCommits.filter(c => 
+      c.message.toLowerCase().includes('wip') || 
+      c.message.toLowerCase().includes('work in progress')
+    ).length;
+    if (wipCount >= 5) {
+      facts.push({
+        emoji: '🚧',
+        text: `${wipCount} "WIP" commits — shipping in progress!`,
+        category: 'quirky'
+      });
+    }
+
+    const fixCount = sampleCommits.filter(c => 
+      c.message.toLowerCase().startsWith('fix')
+    ).length;
+    if (fixCount >= 10) {
+      facts.push({
+        emoji: '🔧',
+        text: `${Math.round((fixCount / sampleCommits.length) * 100)}% of commits are fixes — debugging champion!`,
+        category: 'quirky'
+      });
+    }
+
+    // Midnight commits
+    const midnightCommits = byHour[0] + byHour[23];
+    if (midnightCommits >= 5) {
+      facts.push({
+        emoji: '🕛',
+        text: `${midnightCommits} commits around midnight — when inspiration strikes!`,
+        category: 'quirky'
+      });
+    }
+
+    // Average commits per day (active days)
+    const activeDays = commits.reduce((set, c) => {
+      set.add(c.date.toISOString().split('T')[0]);
+      return set;
+    }, new Set<string>()).size;
+    
+    if (activeDays > 0) {
+      const avgPerActiveDay = totalCommits / activeDays;
+      if (avgPerActiveDay >= 5) {
+        facts.push({
+          emoji: '⚡',
+          text: `You average ${avgPerActiveDay.toFixed(1)} commits per active day — machine mode!`,
+          category: 'code'
+        });
+      }
+    }
+
+    // Return top 5-6 most interesting facts
+    return facts.slice(0, 6);
+  }
+
+  async getYearComparison(): Promise<YearComparison | undefined> {
+    const previousYear = this.year - 1;
+    
+    try {
+      // Get previous year stats
+      const prevStartDate = new Date(previousYear, 0, 1);
+      const prevEndDate = new Date(previousYear, 11, 31, 23, 59, 59);
+      
+      // Get commits from previous year (simplified - just count)
+      let prevCommits = 0;
+      let prevAdditions = 0;
+      let prevDeletions = 0;
+      const prevRepos = new Set<string>();
+
+      if (this.targetRepo) {
+        const [owner, repo] = this.targetRepo.split('/');
+        try {
+          const commits = await this.octokit.paginate(this.octokit.repos.listCommits, {
+            owner,
+            repo,
+            author: this.username,
+            since: prevStartDate.toISOString(),
+            until: prevEndDate.toISOString(),
+            per_page: 100
+          });
+          prevCommits = commits.length;
+          prevRepos.add(this.targetRepo);
+        } catch {
+          // Repo might not exist in previous year
+        }
+      } else {
+        // Sample a few repos for comparison
+        const repos = await this.octokit.paginate(this.octokit.repos.listForUser, {
+          username: this.username,
+          per_page: 100,
+          type: 'all'
+        });
+
+        const repoSample = repos.slice(0, 20);
+        for (const repo of repoSample) {
+          try {
+            const commits = await this.octokit.paginate(this.octokit.repos.listCommits, {
+              owner: repo.owner.login,
+              repo: repo.name,
+              author: this.username,
+              since: prevStartDate.toISOString(),
+              until: prevEndDate.toISOString(),
+              per_page: 100
+            });
+            if (commits.length > 0) {
+              prevCommits += commits.length;
+              prevRepos.add(`${repo.owner.login}/${repo.name}`);
+            }
+          } catch {
+            // Continue with next repo
+          }
+        }
+      }
+
+      // Get previous year PRs
+      let prevPRs = 0;
+      try {
+        const { data } = await this.octokit.search.issuesAndPullRequests({
+          q: `author:${this.username} type:pr created:${previousYear}-01-01..${previousYear}-12-31`,
+          per_page: 1
+        });
+        prevPRs = data.total_count;
+      } catch {
+        prevPRs = 0;
+      }
+
+      // Calculate streak for previous year (simplified)
+      let prevStreak = 0;
+
+      return {
+        previousYear,
+        commits: { 
+          current: 0, // Will be filled in later
+          previous: prevCommits, 
+          change: 0 
+        },
+        prs: { 
+          current: 0, 
+          previous: prevPRs, 
+          change: 0 
+        },
+        additions: { 
+          current: 0, 
+          previous: prevAdditions, 
+          change: 0 
+        },
+        deletions: { 
+          current: 0, 
+          previous: prevDeletions, 
+          change: 0 
+        },
+        repos: { 
+          current: 0, 
+          previous: prevRepos.size, 
+          change: 0 
+        },
+        streak: { 
+          current: 0, 
+          previous: prevStreak, 
+          change: 0 
+        }
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private calculateChange(current: number, previous: number): number {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return Math.round(((current - previous) / previous) * 100);
+  }
+
+  private formatHour(hour: number): string {
+    if (hour === 0) return '12 AM';
+    if (hour === 12) return '12 PM';
+    if (hour < 12) return `${hour} AM`;
+    return `${hour - 12} PM`;
   }
 }

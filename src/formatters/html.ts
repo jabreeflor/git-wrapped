@@ -274,6 +274,123 @@ export function formatHtml(stats: WrappedStats): string {
     .repo-commits {
       color: #a0a0a0;
     }
+
+    .heatmap {
+      overflow-x: auto;
+      padding: 10px 0;
+    }
+
+    .heatmap-grid {
+      display: flex;
+      gap: 2px;
+    }
+
+    .heatmap-week {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .heatmap-day {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .heatmap-level-0 { background: rgba(255, 255, 255, 0.1); }
+    .heatmap-level-1 { background: #0e4429; }
+    .heatmap-level-2 { background: #006d32; }
+    .heatmap-level-3 { background: #26a641; }
+    .heatmap-level-4 { background: #39d353; }
+
+    .heatmap-legend {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: #a0a0a0;
+    }
+
+    .heatmap-legend .box {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .comparison {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .comparison-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .comparison-label {
+      width: 80px;
+      font-size: 12px;
+      color: #a0a0a0;
+    }
+
+    .comparison-old {
+      font-size: 14px;
+      color: #888;
+    }
+
+    .comparison-arrow {
+      color: #666;
+    }
+
+    .comparison-new {
+      font-size: 16px;
+      font-weight: 600;
+      color: #48dbfb;
+    }
+
+    .comparison-change {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .comparison-change.positive {
+      background: rgba(46, 204, 113, 0.2);
+      color: #2ecc71;
+    }
+
+    .comparison-change.negative {
+      background: rgba(231, 76, 60, 0.2);
+      color: #e74c3c;
+    }
+
+    .comparison-message {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .fun-facts {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .fact {
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
@@ -356,6 +473,47 @@ export function formatHtml(stats: WrappedStats): string {
     </div>
     
     <div class="section">
+      <div class="section-title">📆 Contribution Heatmap</div>
+      <div class="heatmap">
+        ${generateHtmlHeatmap(stats)}
+      </div>
+    </div>
+
+    ${stats.yearComparison && stats.yearComparison.commits.previous > 0 ? `
+    <div class="section">
+      <div class="section-title">📊 ${stats.yearComparison.previousYear} vs ${stats.year}</div>
+      <div class="comparison">
+        <div class="comparison-row">
+          <span class="comparison-label">Commits</span>
+          <span class="comparison-old">${formatNumber(stats.yearComparison.commits.previous)}</span>
+          <span class="comparison-arrow">→</span>
+          <span class="comparison-new">${formatNumber(stats.yearComparison.commits.current)}</span>
+          <span class="comparison-change ${stats.yearComparison.commits.change >= 0 ? 'positive' : 'negative'}">${formatChange(stats.yearComparison.commits.change)}</span>
+        </div>
+        <div class="comparison-row">
+          <span class="comparison-label">PRs</span>
+          <span class="comparison-old">${formatNumber(stats.yearComparison.prs.previous)}</span>
+          <span class="comparison-arrow">→</span>
+          <span class="comparison-new">${formatNumber(stats.yearComparison.prs.current)}</span>
+          <span class="comparison-change ${stats.yearComparison.prs.change >= 0 ? 'positive' : 'negative'}">${formatChange(stats.yearComparison.prs.change)}</span>
+        </div>
+        <div class="comparison-message">
+          ${getComparisonMessage(stats.yearComparison.commits.change, stats.year)}
+        </div>
+      </div>
+    </div>
+    ` : ''}
+
+    ${stats.funFacts.length > 0 ? `
+    <div class="section">
+      <div class="section-title">🎲 Fun Facts</div>
+      <div class="fun-facts">
+        ${stats.funFacts.map(fact => `<div class="fact">${fact.emoji} ${fact.text}</div>`).join('')}
+      </div>
+    </div>
+    ` : ''}
+
+    <div class="section">
       <div class="section-title">✨ Insights</div>
       <div class="insights">
         📅 Most productive day: <span>${stats.mostProductiveDay}</span><br>
@@ -393,4 +551,61 @@ function getAdditionPercentage(stats: WrappedStats): number {
   const total = stats.totalAdditions + stats.totalDeletions;
   if (total === 0) return 50;
   return Math.round((stats.totalAdditions / total) * 100);
+}
+
+function generateHtmlHeatmap(stats: WrappedStats): string {
+  const { heatmap } = stats;
+  
+  let html = '<div class="heatmap-grid">';
+  
+  for (let w = 0; w < Math.min(heatmap.weeks.length, 52); w++) {
+    const week = heatmap.weeks[w];
+    html += '<div class="heatmap-week">';
+    
+    for (let d = 0; d < 7; d++) {
+      if (week.days[d]) {
+        const day = week.days[d];
+        const yearCheck = new Date(day.date).getFullYear();
+        const level = yearCheck === stats.year ? day.level : 0;
+        const title = `${day.date}: ${day.commits} commits`;
+        html += `<div class="heatmap-day heatmap-level-${level}" title="${title}"></div>`;
+      } else {
+        html += '<div class="heatmap-day heatmap-level-0"></div>';
+      }
+    }
+    
+    html += '</div>';
+  }
+  
+  html += '</div>';
+  
+  // Legend
+  html += '<div class="heatmap-legend">';
+  html += '<span>Less</span>';
+  for (let i = 0; i <= 4; i++) {
+    html += `<div class="box heatmap-level-${i}"></div>`;
+  }
+  html += '<span>More</span>';
+  html += '</div>';
+  
+  return html;
+}
+
+function formatChange(change: number): string {
+  if (change > 0) return `+${change}%`;
+  if (change < 0) return `${change}%`;
+  return '0%';
+}
+
+function getComparisonMessage(change: number, year: number): string {
+  if (change > 20) {
+    return `🚀 You coded <strong>${change}%</strong> more in ${year}! Keep crushing it!`;
+  } else if (change > 0) {
+    return `📈 Steady growth! <strong>${change}%</strong> more commits than last year.`;
+  } else if (change < -20) {
+    return `🧘 Taking it easier in ${year} — quality over quantity!`;
+  } else if (change < 0) {
+    return `📊 Slightly fewer commits, but every one counts!`;
+  }
+  return `⚖️ Perfectly balanced, as all things should be.`;
 }

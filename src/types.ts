@@ -42,6 +42,37 @@ export interface Collaborator {
   interactions: number;
 }
 
+export interface YearComparison {
+  previousYear: number;
+  commits: { current: number; previous: number; change: number };
+  prs: { current: number; previous: number; change: number };
+  additions: { current: number; previous: number; change: number };
+  deletions: { current: number; previous: number; change: number };
+  repos: { current: number; previous: number; change: number };
+  streak: { current: number; previous: number; change: number };
+}
+
+export interface FunFact {
+  emoji: string;
+  text: string;
+  category: 'time' | 'code' | 'social' | 'quirky';
+}
+
+export interface HeatmapData {
+  weeks: HeatmapWeek[];
+  maxCommits: number;
+}
+
+export interface HeatmapWeek {
+  days: HeatmapDay[];
+}
+
+export interface HeatmapDay {
+  date: string;
+  commits: number;
+  level: 0 | 1 | 2 | 3 | 4; // GitHub-style intensity levels
+}
+
 export interface WrappedStats {
   // User info
   username: string;
@@ -88,6 +119,11 @@ export interface WrappedStats {
   
   // Daily breakdown for calendar
   dailyCommits: DayStats[];
+  
+  // New features
+  yearComparison?: YearComparison;
+  heatmap: HeatmapData;
+  funFacts: FunFact[];
 }
 
 export type PersonalityType = 

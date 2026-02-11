@@ -185,6 +185,52 @@ export function formatTerminal(stats: WrappedStats): string {
   );
   lines.push(personalityBox);
   
+  // Commit Heatmap
+  const heatmapBox = boxen(
+    formatHeatmap(stats),
+    {
+      padding: 1,
+      margin: { top: 0, bottom: 1, left: 2, right: 2 },
+      borderStyle: 'round',
+      borderColor: 'green',
+      title: '📆 Contribution Heatmap',
+      titleAlignment: 'center'
+    }
+  );
+  lines.push(heatmapBox);
+
+  // Year over year comparison (if available)
+  if (stats.yearComparison && stats.yearComparison.commits.previous > 0) {
+    const comparisonBox = boxen(
+      formatComparison(stats),
+      {
+        padding: 1,
+        margin: { top: 0, bottom: 1, left: 2, right: 2 },
+        borderStyle: 'round',
+        borderColor: 'cyan',
+        title: `📊 ${stats.yearComparison.previousYear} vs ${stats.year}`,
+        titleAlignment: 'center'
+      }
+    );
+    lines.push(comparisonBox);
+  }
+
+  // Fun Facts
+  if (stats.funFacts.length > 0) {
+    const funFactsBox = boxen(
+      formatFunFacts(stats),
+      {
+        padding: 1,
+        margin: { top: 0, bottom: 1, left: 2, right: 2 },
+        borderStyle: 'round',
+        borderColor: 'magenta',
+        title: '🎲 Fun Facts',
+        titleAlignment: 'center'
+      }
+    );
+    lines.push(funFactsBox);
+  }
+
   // Fun insights
   const insightsBox = boxen(
     formatInsights(stats),
@@ -193,7 +239,7 @@ export function formatTerminal(stats: WrappedStats): string {
       margin: { top: 0, bottom: 1, left: 2, right: 2 },
       borderStyle: 'round',
       borderColor: 'yellow',
-      title: '✨ Fun Insights',
+      title: '✨ Insights',
       titleAlignment: 'center'
     }
   );
@@ -380,4 +426,139 @@ function formatHour(hour: number): string {
   if (hour === 12) return '12 PM';
   if (hour < 12) return `${hour} AM`;
   return `${hour - 12} PM`;
+}
+
+function formatHeatmap(stats: WrappedStats): string {
+  const lines: string[] = [];
+  const { heatmap } = stats;
+  
+  // Heatmap characters for different intensity levels
+  const chars = ['░', '▒', '▓', '█', '█'];
+  const colors = [
+    chalk.gray,      // Level 0 - no commits
+    chalk.green,     // Level 1 - light
+    chalk.greenBright, // Level 2 - medium
+    chalk.yellow,    // Level 3 - high  
+    chalk.red        // Level 4 - very high
+  ];
+  
+  // Days of week labels
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  
+  // Month labels
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  // Build month header
+  let monthHeader = '     ';
+  let currentMonth = -1;
+  for (let w = 0; w < Math.min(heatmap.weeks.length, 52); w++) {
+    const week = heatmap.weeks[w];
+    if (week.days.length > 0) {
+      const firstDay = new Date(week.days[0].date);
+      if (firstDay.getMonth() !== currentMonth) {
+        currentMonth = firstDay.getMonth();
+        monthHeader += months[currentMonth];
+        monthHeader += ' '.repeat(Math.max(0, 4 - months[currentMonth].length));
+      } else {
+        monthHeader += ' ';
+      }
+    }
+  }
+  lines.push(chalk.dim(monthHeader));
+  
+  // Build each row (one for each day of week)
+  for (let d = 0; d < 7; d++) {
+    let row = chalk.dim(dayLabels[d] + '  ');
+    
+    for (let w = 0; w < Math.min(heatmap.weeks.length, 52); w++) {
+      const week = heatmap.weeks[w];
+      if (week.days[d]) {
+        const day = week.days[d];
+        const yearCheck = new Date(day.date).getFullYear();
+        
+        if (yearCheck === stats.year) {
+          const char = chars[day.level];
+          const color = colors[day.level];
+          row += color(char);
+        } else {
+          row += ' ';
+        }
+      } else {
+        row += ' ';
+      }
+    }
+    lines.push(row);
+  }
+  
+  // Legend
+  lines.push('');
+  lines.push(
+    chalk.dim('Less ') + 
+    colors[0](chars[0]) + 
+    colors[1](chars[1]) + 
+    colors[2](chars[2]) + 
+    colors[3](chars[3]) + 
+    colors[4](chars[4]) + 
+    chalk.dim(' More')
+  );
+  
+  return lines.join('\n');
+}
+
+function formatComparison(stats: WrappedStats): string {
+  const lines: string[] = [];
+  const comp = stats.yearComparison!;
+  
+  const formatChange = (change: number): string => {
+    if (change > 0) return chalk.green(`+${change}%`);
+    if (change < 0) return chalk.red(`${change}%`);
+    return chalk.gray('0%');
+  };
+
+  const formatBar = (current: number, previous: number): string => {
+    if (previous === 0 && current === 0) return chalk.gray('━━━━━━━━━━');
+    const max = Math.max(current, previous);
+    const currWidth = max > 0 ? Math.round((current / max) * 10) : 0;
+    const prevWidth = max > 0 ? Math.round((previous / max) * 10) : 0;
+    
+    return chalk.cyan('█'.repeat(currWidth)) + chalk.dim('░'.repeat(10 - currWidth));
+  };
+
+  lines.push(`${chalk.bold('Commits')}`);
+  lines.push(`  ${comp.previousYear}: ${formatNumber(comp.commits.previous)} → ${stats.year}: ${chalk.bold(formatNumber(comp.commits.current))} ${formatChange(comp.commits.change)}`);
+  lines.push(`  ${formatBar(comp.commits.current, comp.commits.previous)}`);
+  lines.push('');
+  
+  lines.push(`${chalk.bold('Pull Requests')}`);
+  lines.push(`  ${comp.previousYear}: ${formatNumber(comp.prs.previous)} → ${stats.year}: ${chalk.bold(formatNumber(comp.prs.current))} ${formatChange(comp.prs.change)}`);
+  lines.push('');
+  
+  lines.push(`${chalk.bold('Repositories')}`);
+  lines.push(`  ${comp.previousYear}: ${comp.repos.previous} → ${stats.year}: ${chalk.bold(String(comp.repos.current))} ${formatChange(comp.repos.change)}`);
+  
+  // Motivational message based on comparison
+  lines.push('');
+  if (comp.commits.change > 20) {
+    lines.push(chalk.green(`🚀 You coded ${comp.commits.change}% more in ${stats.year}! Keep crushing it!`));
+  } else if (comp.commits.change > 0) {
+    lines.push(chalk.cyan(`📈 Steady growth! ${comp.commits.change}% more commits than last year.`));
+  } else if (comp.commits.change < -20) {
+    lines.push(chalk.yellow(`🧘 Taking it easier in ${stats.year} — quality over quantity!`));
+  } else if (comp.commits.change < 0) {
+    lines.push(chalk.dim(`📊 Slightly fewer commits, but every one counts!`));
+  } else {
+    lines.push(chalk.blue(`⚖️ Perfectly balanced, as all things should be.`));
+  }
+  
+  return lines.join('\n');
+}
+
+function formatFunFacts(stats: WrappedStats): string {
+  const lines: string[] = [];
+  
+  for (const fact of stats.funFacts) {
+    lines.push(`${fact.emoji} ${fact.text}`);
+  }
+  
+  return lines.join('\n');
 }
